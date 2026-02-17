@@ -373,6 +373,9 @@ def test_solve_with_symbol_jvp():
     assert primals.shape == (2,)  # noqa: S101
     assert tangents.shape == (2,)  # noqa: S101
 
+
+# KLUHandleManager testing
+
 def use_handle(manager, x):
     """Simulates any function requiring a concrete handle (e.g. a C pointer)."""
     assert not isinstance(manager.handle, jax.core.Tracer), (
@@ -387,4 +390,27 @@ def test_registration_traces_handle():
 
     fn = jax.jit(use_handle)
     result = fn(manager, jnp.array(1.0))
-    assert result == 2.0
+    assert jnp.allclose(result, 2.0)
+
+def test_registration_handle_concrete_under_grad():
+    manager = klujax.KLUHandleManager(jnp.array(0xDEADBEEF, dtype=jnp.int64),
+                                      free_callable=lambda x: None)
+    fn = jax.grad(lambda x: use_handle(manager, x))
+    fn(jnp.array(1.0))
+
+def test_handle_survives_pytree_roundtrip():
+    handle_val = jnp.array(0xDEADBEEF, dtype=jnp.int64)
+    manager = klujax.KLUHandleManager(handle_val, free_callable=lambda x: None)
+
+    leaves, treedef = jax.tree_util.tree_flatten(manager)
+    reconstructed = treedef.unflatten(leaves)
+
+    assert leaves == []
+    assert int(reconstructed.handle) == int(handle_val)
+
+def test_registration_handle_concrete_under_vmap():
+    manager = klujax.KLUHandleManager(jnp.array(0xDEADBEEF, dtype=jnp.int64),
+                                      free_callable=lambda x: None)
+    fn = jax.vmap(lambda x: use_handle(manager, x))
+    result = fn(jnp.ones((4,)))
+    assert jnp.allclose(result, 2.0)
